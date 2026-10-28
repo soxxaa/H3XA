@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Shop</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <header class="site-header">
+        <div class="topbar">
+            <h1 class="logo"><img src="logo.svg" alt="H3XA" height="36"></h1>
+        </div>
+        <nav class="scroll-menu" id="category-nav"></nav>
+    </header>
+
+    <main class="page-content">
+        <h2 id="category-title"></h2>
+
+        <!-- Owner-only upload panel -->
+        <section id="owner-panel" class="owner-panel" hidden>
+            <h3>Add item</h3>
+            <p class="hint">Tip: hold an item and drag it to rearrange. Tap Edit to change its photo, name or price.</p>
+            <form id="upload-form">
+                <input type="text" id="item-name" placeholder="Item name" required maxlength="60">
+                <input type="number" id="item-price" placeholder="Price" required min="0" step="any">
+                <label class="upload-box" for="item-image">
+                    <div id="upload-label">Tap to choose a photo</div>
+                    <input type="file" id="item-image" accept="image/*" required>
+                </label>
+                <button type="submit" class="primary-btn">Upload item</button>
+            </form>
+        </section>
+
+        <div id="product-grid" class="product-grid"></div>
+        <p id="empty-msg" class="empty-msg" hidden>No items in this category yet.</p>
+    </main>
+
+    <!-- Bottom cart bar -->
+    <div class="cart-bar">
+        <button id="owner-btn" type="button">Login</button>
+        <button id="cart-btn" class="cart-btn" type="button">Cart <span id="cart-count">0</span></button>
+    </div>
+
+    <!-- Cart drawer -->
+    <div id="overlay" class="overlay"></div>
+    <aside id="cart-drawer" class="cart-drawer" aria-label="Shopping cart">
+        <div class="drawer-head">
+            <h3>Your Cart</h3>
+            <button id="cart-close" class="link-btn" type="button">Close</button>
+        </div>
+        <div id="cart-items" class="cart-items"></div>
+        <div class="drawer-foot">
+            <div class="cart-total"><span>Total</span><strong id="cart-total">0</strong></div>
+            <button id="checkout-btn" class="primary-btn" type="button">Checkout</button>
+        </div>
+    </aside>
+
+    <!-- Owner login modal -->
+    <div id="login-modal" class="modal" hidden>
+        <form id="login-form" class="modal-box">
+            <h3>Login</h3>
+            <input type="password" id="owner-password" placeholder="Password" required autocomplete="current-password">
+            <p id="login-error" class="error-msg" hidden>Wrong password.</p>
+            <div class="modal-actions">
+                <button type="button" id="login-cancel" class="link-btn">Cancel</button>
+                <button type="submit" class="primary-btn">Log in</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Owner edit modal -->
+    <div id="edit-modal" class="modal" hidden>
+        <form id="edit-form" class="modal-box">
+            <h3>Edit item</h3>
+            <img id="edit-preview" class="edit-preview" alt="">
+            <label class="upload-box" for="edit-image">
+                <div id="edit-image-label">Tap to change photo</div>
+                <input type="file" id="edit-image" accept="image/*">
+            </label>
+            <input type="text" id="edit-name" placeholder="Item name" required maxlength="60">
+            <input type="number" id="edit-price" placeholder="Price" required min="0" step="any">
+            <div class="modal-actions">
+                <button type="button" id="edit-cancel" class="link-btn">Cancel</button>
+                <button type="submit" class="primary-btn">Save</button>
+            </div>
+        </form>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
