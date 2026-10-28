@@ -61,8 +61,9 @@
     <div id="login-modal" class="modal" hidden>
         <form id="login-form" class="modal-box">
             <h3>Login</h3>
+            <input type="email" id="owner-email" placeholder="Email" required autocomplete="username">
             <input type="password" id="owner-password" placeholder="Password" required autocomplete="current-password">
-            <p id="login-error" class="error-msg" hidden>Wrong password.</p>
+            <p id="login-error" class="error-msg" hidden>Wrong email or password.</p>
             <div class="modal-actions">
                 <button type="button" id="login-cancel" class="link-btn">Cancel</button>
                 <button type="submit" class="primary-btn">Log in</button>
@@ -88,6 +89,7 @@
         </form>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.1/dist/umd/supabase.js"></script>
     <script src="script.js"></script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 // ================= CONFIG =================
-// Change this password before you use the site.
-// NOTE: this is front-end only, so it is a placeholder, not real security.
-const OWNER_PASSWORD = "change-this-password";
+const SUPABASE_URL = "https://vfjzqbnwwdxdxdgumzhi.supabase.co";
+const SUPABASE_KEY = "sb_publishable__06UmNiEgfYnv6hScSpC4g_wu3dbjkZ"; // publishable key: safe to be public
+const BUCKET = "product-images";
 const CURRENCY = "₦";
 const CATEGORIES = {
     tshirts: "T-Shirts",
@@ -12,7 +12,10 @@ const CATEGORIES = {
     caps: "Caps"
 };
 
-// ================= STORAGE =================
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ================= STATE =================
+// The cart stays on each customer's own device. Products live in Supabase.
 const store = {
     get(key, fallback) {
         try {
@@ -26,35 +29,77 @@ const store = {
     }
 };
 
-let products = store.get("shop_products", []); // {id, category, name, price, image}
-let cart = store.get("shop_cart", []);         // {id, qty}
+let products = [];                       // rows from the products table
+let cart = store.get("shop_cart", []);   // {id, qty}
 let currentCategory = "tshirts";
 let isOwner = false;
-try { isOwner = sessionStorage.getItem("shop_owner") === "1"; } catch (e) {}
+let loadError = false;
 
 // ================= HELPERS =================
 const $ = (id) => document.getElementById(id);
 const formatPrice = (n) => CURRENCY + Number(n).toLocaleString();
+const byPosition = (a, b) =>
+    (a.position - b.position) || String(a.created_at).localeCompare(String(b.created_at));
 
-function resizeImage(file, maxSize = 800) {
+// Shrink a photo before uploading (keeps the site fast)
+function resizeImage(file, maxSize = 1000) {
     return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onerror = reject;
-        reader.onload = () => {
-            const img = new Image();
-            img.onerror = reject;
-            img.onload = () => {
-                const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
-                const canvas = document.createElement("canvas");
-                canvas.width = Math.round(img.width * scale);
-                canvas.height = Math.round(img.height * scale);
-                canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-                resolve(canvas.toDataURL("image/jpeg", 0.8));
-            };
-            img.src = reader.result;
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Could not read that image.")); };
+        img.onload = () => {
+            const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.round(img.width * scale);
+            canvas.height = Math.round(img.height * scale);
+            canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+            URL.revokeObjectURL(url);
+            canvas.toBlob(
+                (blob) => (blob ? resolve(blob) : reject(new Error("Could not process that image."))),
+                "image/jpeg",
+                0.85
+            );
         };
-        reader.readAsDataURL(file);
+        img.src = url;
     });
+}
+
+async function uploadImage(blob) {
+    const path = Date.now() + "-" + Math.random().toString(36).slice(2, 8) + ".jpg";
+    const { error } = await sb.storage.from(BUCKET).upload(path, blob, {
+        contentType: "image/jpeg",
+        cacheControl: "31536000"
+    });
+    if (error) throw error;
+    return sb.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+}
+
+function removeImage(url) {
+    const marker = "/" + BUCKET + "/";
+    const i = url ? url.indexOf(marker) : -1;
+    if (i === -1) return;
+    sb.storage.from(BUCKET).remove([url.slice(i + marker.length)]);
+}
+
+// ================= LOAD PRODUCTS =================
+async function loadProducts() {
+    const { data, error } = await sb
+        .from("products")
+        .select("*")
+        .order("position", { ascending: true })
+        .order("created_at", { ascending: true });
+
+    if (error) {
+        loadError = true;
+        renderProducts();
+        return;
+    }
+    loadError = false;
+    products = data || [];
+    cart = cart.filter((c) => products.some((p) => p.id === c.id));
+    store.set("shop_cart", cart);
+    renderProducts();
+    renderCart();
 }
 
 // ================= NAV / CATEGORIES =================
@@ -74,7 +119,11 @@ function renderProducts() {
     $("category-title").textContent = CATEGORIES[currentCategory];
     const grid = $("product-grid");
     grid.innerHTML = "";
-    const items = products.filter((p) => p.category === currentCategory);
+    const items = products.filter((p) => p.category === currentCategory).sort(byPosition);
+
+    $("empty-msg").textContent = loadError
+        ? "Could not load products. Check your connection and refresh."
+        : "No items in this category yet.";
     $("empty-msg").hidden = items.length > 0;
 
     items.forEach((p) => {
@@ -83,9 +132,10 @@ function renderProducts() {
         card.dataset.id = p.id;
 
         const img = document.createElement("img");
-        img.src = p.image;
+        img.src = p.image_url;
         img.alt = p.name;
         img.draggable = false;
+        img.loading = "lazy";
 
         const info = document.createElement("div");
         info.className = "product-info";
@@ -132,40 +182,52 @@ function renderProducts() {
     });
 }
 
-// ================= OWNER =================
+// ================= OWNER LOGIN =================
 function updateOwnerUI() {
     $("owner-panel").hidden = !isOwner;
     $("owner-btn").textContent = isOwner ? "Log out" : "Login";
     renderProducts();
 }
 
-$("owner-btn").onclick = () => {
+$("owner-btn").onclick = async () => {
     if (isOwner) {
+        await sb.auth.signOut();
         isOwner = false;
-        try { sessionStorage.removeItem("shop_owner"); } catch (e) {}
         updateOwnerUI();
     } else {
         $("login-error").hidden = true;
         $("owner-password").value = "";
         $("login-modal").hidden = false;
-        $("owner-password").focus();
+        $("owner-email").focus();
     }
 };
 
 $("login-cancel").onclick = () => { $("login-modal").hidden = true; };
 
-$("login-form").onsubmit = (e) => {
+$("login-form").onsubmit = async (e) => {
     e.preventDefault();
-    if ($("owner-password").value === OWNER_PASSWORD) {
-        isOwner = true;
-        try { sessionStorage.setItem("shop_owner", "1"); } catch (err) {}
-        $("login-modal").hidden = true;
-        updateOwnerUI();
-    } else {
+    const btn = e.target.querySelector("button[type=submit]");
+    btn.disabled = true;
+    const { error } = await sb.auth.signInWithPassword({
+        email: $("owner-email").value.trim(),
+        password: $("owner-password").value
+    });
+    btn.disabled = false;
+    if (error) {
         $("login-error").hidden = false;
+        return;
     }
+    isOwner = true;
+    $("login-modal").hidden = true;
+    updateOwnerUI();
 };
 
+sb.auth.onAuthStateChange((_event, session) => {
+    const now = !!session;
+    if (now !== isOwner) { isOwner = now; updateOwnerUI(); }
+});
+
+// ================= ADD ITEM (owner) =================
 $("item-image").onchange = (e) => {
     const f = e.target.files[0];
     $("upload-label").textContent = f ? f.name : "Tap to choose a photo";
@@ -173,45 +235,263 @@ $("item-image").onchange = (e) => {
 
 $("upload-form").onsubmit = async (e) => {
     e.preventDefault();
-    if (!isOwner) return; // only the owner can upload
-
+    if (!isOwner) return;
+    const form = e.target;
     const file = $("item-image").files[0];
     if (!file) return;
 
-    let image;
-    try { image = await resizeImage(file); }
-    catch (err) { alert("Could not read that image. Try another one."); return; }
+    const btn = form.querySelector("button[type=submit]");
+    btn.disabled = true;
+    btn.textContent = "Uploading…";
 
-    const product = {
-        id: "p" + Date.now(),
-        category: currentCategory,
-        name: $("item-name").value.trim(),
-        price: Number($("item-price").value),
-        image
-    };
+    try {
+        const blob = await resizeImage(file);
+        const imageUrl = await uploadImage(blob);
 
-    products.push(product);
-    if (!store.set("shop_products", products)) {
-        products.pop();
-        alert("Storage is full. Delete some items and try again.");
-        return;
+        const inCat = products.filter((p) => p.category === currentCategory);
+        const position = inCat.length ? Math.max(...inCat.map((p) => p.position)) + 1 : 0;
+
+        const { data, error } = await sb.from("products").insert({
+            category: currentCategory,
+            name: $("item-name").value.trim(),
+            price: Number($("item-price").value),
+            image_url: imageUrl,
+            position
+        }).select().single();
+
+        if (error) { removeImage(imageUrl); throw error; }
+
+        products.push(data);
+        form.reset();
+        $("upload-label").textContent = "Tap to choose a photo";
+        renderProducts();
+    } catch (err) {
+        alert("Upload failed: " + (err.message || "please try again."));
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "Upload item";
     }
-
-    e.target.reset();
-    $("upload-label").textContent = "Tap to choose a photo";
-    renderProducts();
 };
 
-function deleteProduct(id) {
+// ================= DELETE ITEM (owner) =================
+async function deleteProduct(id) {
     if (!isOwner) return;
     if (!confirm("Delete this item?")) return;
-    products = products.filter((p) => p.id !== id);
+    const p = products.find((x) => x.id === id);
+
+    const { error } = await sb.from("products").delete().eq("id", id);
+    if (error) { alert("Could not delete: " + error.message); return; }
+
+    if (p) removeImage(p.image_url);
+    products = products.filter((x) => x.id !== id);
     cart = cart.filter((c) => c.id !== id);
-    store.set("shop_products", products);
     store.set("shop_cart", cart);
     renderProducts();
     renderCart();
 }
+
+// ================= EDIT ITEM (owner) =================
+let editingId = null;
+let editNewImage = null; // Blob of a newly chosen photo
+
+function openEdit(id) {
+    if (!isOwner) return;
+    const p = products.find((x) => x.id === id);
+    if (!p) return;
+    editingId = id;
+    editNewImage = null;
+    $("edit-name").value = p.name;
+    $("edit-price").value = p.price;
+    $("edit-preview").src = p.image_url;
+    $("edit-image").value = "";
+    $("edit-image-label").textContent = "Tap to change photo";
+    $("edit-modal").hidden = false;
+}
+
+$("edit-cancel").onclick = () => {
+    $("edit-modal").hidden = true;
+    editingId = null;
+};
+
+$("edit-image").onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+        editNewImage = await resizeImage(f);
+        $("edit-preview").src = URL.createObjectURL(editNewImage);
+        $("edit-image-label").textContent = f.name;
+    } catch (err) {
+        alert("Could not read that image. Try another one.");
+    }
+};
+
+$("edit-form").onsubmit = async (e) => {
+    e.preventDefault();
+    if (!isOwner) return;
+    const p = products.find((x) => x.id === editingId);
+    if (!p) return;
+
+    const btn = e.target.querySelector("button[type=submit]");
+    btn.disabled = true;
+
+    try {
+        const changes = {
+            name: $("edit-name").value.trim(),
+            price: Number($("edit-price").value)
+        };
+        const oldUrl = p.image_url;
+        if (editNewImage) changes.image_url = await uploadImage(editNewImage);
+
+        const { data, error } = await sb.from("products")
+            .update(changes).eq("id", p.id).select().single();
+        if (error) {
+            if (changes.image_url) removeImage(changes.image_url);
+            throw error;
+        }
+
+        Object.assign(p, data);
+        if (editNewImage) removeImage(oldUrl);
+
+        $("edit-modal").hidden = true;
+        editingId = null;
+        renderProducts();
+        renderCart();
+    } catch (err) {
+        alert("Could not save: " + (err.message || "please try again."));
+    } finally {
+        btn.disabled = false;
+    }
+};
+
+// ================= HOLD & DRAG TO REORDER (owner) =================
+const HOLD_MS = 400;
+let pending = null;   // a press waiting to turn into a drag
+let drag = null;      // the drag in progress
+let justDragged = false;
+
+function cancelPending() {
+    if (pending) { clearTimeout(pending.timer); pending = null; }
+}
+
+$("product-grid").addEventListener("pointerdown", (e) => {
+    if (!isOwner || drag) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const card = e.target.closest(".product-card");
+    if (!card) return;
+    cancelPending();
+    pending = {
+        card,
+        startX: e.clientX, startY: e.clientY,
+        x: e.clientX, y: e.clientY,
+        timer: setTimeout(startDrag, HOLD_MS)
+    };
+});
+
+function startDrag() {
+    if (!pending) return;
+    const { card, x, y } = pending;
+    pending = null;
+    const r = card.getBoundingClientRect();
+    drag = { card, x, y, grabX: x - r.left, grabY: y - r.top, raf: 0 };
+    card.classList.add("dragging");
+    if (navigator.vibrate) navigator.vibrate(20);
+    updateDrag();
+    drag.raf = requestAnimationFrame(autoScroll);
+}
+
+function updateDrag() {
+    if (!drag) return;
+    const { card, x, y } = drag;
+
+    const target = document.elementsFromPoint(x, y)
+        .map((el) => el.closest && el.closest(".product-card"))
+        .find((c) => c && c !== card);
+    if (target && target.parentNode === card.parentNode) {
+        if (card.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_PRECEDING) {
+            target.before(card);
+        } else {
+            target.after(card);
+        }
+    }
+
+    card.style.transform = "none";
+    const r = card.getBoundingClientRect();
+    card.style.transform =
+        "translate(" + (x - drag.grabX - r.left) + "px," + (y - drag.grabY - r.top) + "px) scale(1.04)";
+}
+
+function autoScroll() {
+    if (!drag) return;
+    const headerH = document.querySelector(".site-header").offsetHeight;
+    let dy = 0;
+    if (drag.y < headerH + 50) dy = -10;
+    else if (drag.y > window.innerHeight - 120) dy = 10;
+    if (dy) { window.scrollBy(0, dy); updateDrag(); }
+    drag.raf = requestAnimationFrame(autoScroll);
+}
+
+function endDrag() {
+    cancelPending();
+    if (!drag) return;
+    cancelAnimationFrame(drag.raf);
+    const card = drag.card;
+    drag = null;
+    card.classList.remove("dragging");
+    card.style.transform = "";
+    justDragged = true;
+    setTimeout(() => { justDragged = false; }, 350);
+    saveOrder();
+}
+
+async function saveOrder() {
+    const ids = [...$("product-grid").querySelectorAll(".product-card")].map((c) => c.dataset.id);
+    const ordered = ids.map((id) => products.find((p) => p.id === id)).filter(Boolean);
+    const inCategory = products.filter((p) => p.category === currentCategory).length;
+    if (ordered.length !== inCategory) { renderProducts(); return; }
+
+    const changed = [];
+    ordered.forEach((p, i) => {
+        if (p.position !== i) { p.position = i; changed.push(p); }
+    });
+    renderProducts();
+    if (changed.length === 0) return;
+
+    const results = await Promise.all(
+        changed.map((p) => sb.from("products").update({ position: p.position }).eq("id", p.id))
+    );
+    if (results.some((r) => r.error)) {
+        alert("Could not save the new order. Reloading.");
+        loadProducts();
+    }
+}
+
+document.addEventListener("pointermove", (e) => {
+    if (pending) {
+        if (Math.hypot(e.clientX - pending.startX, e.clientY - pending.startY) > 10) {
+            cancelPending(); // finger moved: it's a scroll, not a hold
+        } else {
+            pending.x = e.clientX;
+            pending.y = e.clientY;
+        }
+    }
+    if (drag) {
+        drag.x = e.clientX;
+        drag.y = e.clientY;
+        updateDrag();
+    }
+});
+
+document.addEventListener("pointerup", endDrag);
+document.addEventListener("pointercancel", endDrag);
+
+// stop the page from scrolling while an item is being dragged
+document.addEventListener("touchmove", (e) => { if (drag) e.preventDefault(); }, { passive: false });
+
+// no long-press menu on items, and ignore the tap that ends a drag
+$("product-grid").addEventListener("contextmenu", (e) => { if (isOwner) e.preventDefault(); });
+$("product-grid").addEventListener("click", (e) => {
+    if (justDragged) { e.stopPropagation(); e.preventDefault(); }
+}, true);
 
 // ================= CART =================
 function addToCart(id) {
@@ -238,14 +518,14 @@ function renderCart() {
     cart.forEach((c) => {
         const p = products.find((x) => x.id === c.id);
         if (!p) return;
-        total += p.price * c.qty;
+        total += Number(p.price) * c.qty;
         count += c.qty;
 
         const row = document.createElement("div");
         row.className = "cart-row";
 
         const img = document.createElement("img");
-        img.src = p.image;
+        img.src = p.image_url;
         img.alt = p.name;
 
         const info = document.createElement("div");
@@ -305,301 +585,17 @@ $("checkout-btn").onclick = () => {
     alert("Checkout is coming soon.");
 };
 
-// ================= EDIT ITEM (owner) =================
-let editingId = null;
-let editNewImage = null;
-
-function openEdit(id) {
-    if (!isOwner) return;
-    const p = products.find((x) => x.id === id);
-    if (!p) return;
-    editingId = id;
-    editNewImage = null;
-    $("edit-name").value = p.name;
-    $("edit-price").value = p.price;
-    $("edit-preview").src = p.image;
-    $("edit-image").value = "";
-    $("edit-image-label").textContent = "Tap to change photo";
-    $("edit-modal").hidden = false;
-}
-
-$("edit-cancel").onclick = () => {
-    $("edit-modal").hidden = true;
-    editingId = null;
-};
-
-$("edit-image").onchange = async (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    try {
-        editNewImage = await resizeImage(f);
-        $("edit-preview").src = editNewImage;
-        $("edit-image-label").textContent = f.name;
-    } catch (err) {
-        alert("Could not read that image. Try another one.");
-    }
-};
-
-$("edit-form").onsubmit = (e) => {
-    e.preventDefault();
-    if (!isOwner) return;
-    const p = products.find((x) => x.id === editingId);
-    if (!p) return;
-
-    const backup = Object.assign({}, p);
-    p.name = $("edit-name").value.trim();
-    p.price = Number($("edit-price").value);
-    if (editNewImage) p.image = editNewImage;
-    p.sample = false; // an edited sample becomes a real item
-
-    if (!store.set("shop_products", products)) {
-        Object.assign(p, backup);
-        alert("Storage is full. Try a smaller photo or delete some items.");
-        return;
-    }
-
-    $("edit-modal").hidden = true;
-    editingId = null;
-    renderProducts();
-    renderCart();
-};
-
-// ================= HOLD & DRAG TO REORDER (owner) =================
-const HOLD_MS = 400;
-let pending = null;   // a press waiting to turn into a drag
-let drag = null;      // the drag in progress
-let justDragged = false;
-
-function cancelPending() {
-    if (pending) { clearTimeout(pending.timer); pending = null; }
-}
-
-$("product-grid").addEventListener("pointerdown", (e) => {
-    if (!isOwner || drag) return;
-    if (e.pointerType === "mouse" && e.button !== 0) return;
-    const card = e.target.closest(".product-card");
-    if (!card) return;
-    cancelPending();
-    pending = {
-        card,
-        startX: e.clientX, startY: e.clientY,
-        x: e.clientX, y: e.clientY,
-        timer: setTimeout(startDrag, HOLD_MS)
-    };
-});
-
-function startDrag() {
-    if (!pending) return;
-    const { card, x, y } = pending;
-    pending = null;
-    const r = card.getBoundingClientRect();
-    drag = { card, x, y, grabX: x - r.left, grabY: y - r.top, raf: 0 };
-    card.classList.add("dragging");
-    if (navigator.vibrate) navigator.vibrate(20);
-    updateDrag();
-    drag.raf = requestAnimationFrame(autoScroll);
-}
-
-function updateDrag() {
-    if (!drag) return;
-    const { card, x, y } = drag;
-
-    // find the card under the finger and swap places with it
-    const target = document.elementsFromPoint(x, y)
-        .map((el) => el.closest && el.closest(".product-card"))
-        .find((c) => c && c !== card);
-    if (target && target.parentNode === card.parentNode) {
-        if (card.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_PRECEDING) {
-            target.before(card);
-        } else {
-            target.after(card);
-        }
-    }
-
-    // make the dragged card follow the finger
-    card.style.transform = "none";
-    const r = card.getBoundingClientRect();
-    card.style.transform =
-        "translate(" + (x - drag.grabX - r.left) + "px," + (y - drag.grabY - r.top) + "px) scale(1.04)";
-}
-
-function autoScroll() {
-    if (!drag) return;
-    const headerH = document.querySelector(".site-header").offsetHeight;
-    let dy = 0;
-    if (drag.y < headerH + 50) dy = -10;
-    else if (drag.y > window.innerHeight - 120) dy = 10;
-    if (dy) { window.scrollBy(0, dy); updateDrag(); }
-    drag.raf = requestAnimationFrame(autoScroll);
-}
-
-function endDrag() {
-    cancelPending();
-    if (!drag) return;
-    cancelAnimationFrame(drag.raf);
-    const card = drag.card;
-    drag = null;
-    card.classList.remove("dragging");
-    card.style.transform = "";
-    justDragged = true;
-    setTimeout(() => { justDragged = false; }, 350);
-    saveOrder();
-}
-
-function saveOrder() {
-    const ids = [...$("product-grid").querySelectorAll(".product-card")].map((c) => c.dataset.id);
-    const ordered = ids.map((id) => products.find((p) => p.id === id)).filter(Boolean);
-    const inCategory = products.filter((p) => p.category === currentCategory).length;
-    if (ordered.length === inCategory) {
-        let k = 0;
-        products = products.map((p) => (p.category === currentCategory ? ordered[k++] : p));
-        store.set("shop_products", products);
-    }
-    renderProducts();
-}
-
-document.addEventListener("pointermove", (e) => {
-    if (pending) {
-        if (Math.hypot(e.clientX - pending.startX, e.clientY - pending.startY) > 10) {
-            cancelPending(); // finger moved: it's a scroll, not a hold
-        } else {
-            pending.x = e.clientX;
-            pending.y = e.clientY;
-        }
-    }
-    if (drag) {
-        drag.x = e.clientX;
-        drag.y = e.clientY;
-        updateDrag();
-    }
-});
-
-document.addEventListener("pointerup", endDrag);
-document.addEventListener("pointercancel", endDrag);
-
-// stop the page from scrolling while an item is being dragged
-document.addEventListener("touchmove", (e) => { if (drag) e.preventDefault(); }, { passive: false });
-
-// no long-press menu on items, and ignore the tap that ends a drag
-$("product-grid").addEventListener("contextmenu", (e) => { if (isOwner) e.preventDefault(); });
-$("product-grid").addEventListener("click", (e) => {
-    if (justDragged) { e.stopPropagation(); e.preventDefault(); }
-}, true);
-
-// ================= SAMPLE ITEMS (for testing) =================
-// Set to false when you no longer want sample items added.
-const SEED_SAMPLES = true;
-
-const CATEGORY_EMOJI = {
-    tshirts: "👕", trousers: "👖", hoodies: "🧶",
-    shoes: "👟", jackets: "🧥", caps: "🧢"
-};
-
-// [name, price, background color]
-const SAMPLE_ITEMS = {
-    tshirts: [
-        ["Classic White Tee", 8500, "#eeeeee"],
-        ["Black Graphic Tee", 10000, "#cfcfcf"],
-        ["Oversized Sand Tee", 12000, "#e8dcc4"]
-    ],
-    trousers: [
-        ["Slim Fit Chinos", 18000, "#d9cfb8"],
-        ["Black Cargo Pants", 22000, "#c4c4c4"],
-        ["Blue Denim Jeans", 20000, "#bcd0e6"]
-    ],
-    hoodies: [
-        ["Grey Pullover Hoodie", 25000, "#d6d6d6"],
-        ["Black Zip Hoodie", 28000, "#bdbdbd"],
-        ["Cream Oversized Hoodie", 30000, "#f2e9d8"]
-    ],
-    shoes: [
-        ["White Sneakers", 35000, "#f0f0f0"],
-        ["Black Leather Boots", 45000, "#c9c9c9"],
-        ["Running Trainers", 40000, "#d4e6d0"]
-    ],
-    jackets: [
-        ["Denim Jacket", 32000, "#bcd0e6"],
-        ["Black Bomber Jacket", 38000, "#c4c4c4"],
-        ["Olive Windbreaker", 29000, "#d3dcc0"]
-    ],
-    caps: [
-        ["Black Snapback", 6500, "#cfcfcf"],
-        ["White Dad Cap", 6000, "#eeeeee"],
-        ["Navy Baseball Cap", 7000, "#c5cfe6"]
-    ]
-};
-
-// H3XA wordmark (same letter shapes as logo.svg), printed under the emoji
-const WORDMARK_PATHS =
-    '<g fill="none" stroke="#000" stroke-width="11" stroke-linejoin="bevel" ' +
-    'transform="translate(143 296) scale(0.5) translate(-115 -22)">' +
-    '<path d="M115.5 22V78M150.5 22V78M115.5 50H150.5"/>' +
-    '<path d="M179 27.5H214.5V72.5H179M193 50H214.5" stroke-linejoin="miter"/>' +
-    '<path d="M243 22L279 78M279 22L243 78"/>' +
-    '<path d="M307 78L325 22L343 78M312 62H338"/>' +
-    '</g>';
-
-function makePlaceholder(emoji, color) {
-    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">' +
-        '<rect width="400" height="400" fill="' + color + '"/>' +
-        '<text x="200" y="230" font-size="160" text-anchor="middle">' + emoji + '</text>' +
-        WORDMARK_PATHS + '</svg>';
-    return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
-}
-
-// Re-draw sample images on every load so design updates show up
-function refreshSampleImages() {
-    products.forEach((p) => {
-        if (!p.sample) return;
-        const m = /^sample-([a-z]+)-(\d+)$/.exec(p.id);
-        if (!m || !SAMPLE_ITEMS[m[1]]) return;
-        const s = SAMPLE_ITEMS[m[1]][Number(m[2])];
-        if (s) p.image = makePlaceholder(CATEGORY_EMOJI[m[1]], s[2]);
-    });
-}
-
-function seedSamples() {
-    if (!SEED_SAMPLES || store.get("shop_seeded", false)) return;
-    Object.entries(SAMPLE_ITEMS).forEach(([category, items]) => {
-        items.forEach(([name, price, color], i) => {
-            products.push({
-                id: "sample-" + category + "-" + i,
-                category,
-                name,
-                price,
-                image: makePlaceholder(CATEGORY_EMOJI[category], color),
-                sample: true
-            });
-        });
-    });
-    store.set("shop_products", products);
-    store.set("shop_seeded", true);
-}
-
-// Owner-only button to remove all sample items
-(function addRemoveSamplesButton() {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "link-btn";
-    btn.style.marginTop = "12px";
-    btn.textContent = "Remove sample items";
-    btn.onclick = () => {
-        if (!isOwner) return;
-        if (!confirm("Remove all sample items?")) return;
-        const ids = products.filter((p) => p.sample).map((p) => p.id);
-        products = products.filter((p) => !p.sample);
-        cart = cart.filter((c) => !ids.includes(c.id));
-        store.set("shop_products", products);
-        store.set("shop_cart", cart);
-        renderProducts();
-        renderCart();
-    };
-    $("owner-panel").appendChild(btn);
-})();
-
 // ================= INIT =================
-seedSamples();
-refreshSampleImages();
-renderNav();
-updateOwnerUI();
-renderCart();
+(async function init() {
+    renderNav();
+    $("empty-msg").textContent = "Loading…";
+    $("empty-msg").hidden = false;
+
+    const sessionCheck = sb.auth.getSession()
+        .then(({ data }) => { isOwner = !!(data && data.session); })
+        .catch(() => {});
+
+    await Promise.all([loadProducts(), sessionCheck]);
+    updateOwnerUI();
+    renderCart();
+})();
