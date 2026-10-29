@@ -10,10 +10,10 @@ const SHOP_NAME = "H3XA";
 const PAYSTACK_PUBLIC_KEY = "pk_test_PASTE_YOUR_PUBLIC_KEY_HERE";
 
 // Order emails (EmailJS). Fill all four to turn on receipts + new-order alerts.
-const OWNER_EMAIL = "PASTE_YOUR_EMAIL_HERE";          // new orders are emailed here
-const EMAILJS_SERVICE_ID = "PASTE_SERVICE_ID";
-const EMAILJS_TEMPLATE_ID = "PASTE_TEMPLATE_ID";
-const EMAILJS_PUBLIC_KEY = "PASTE_PUBLIC_KEY";
+const OWNER_EMAIL = "bengoldraymond@gmail.com";          // new orders are emailed here
+const EMAILJS_SERVICE_ID = "service_s7p8zxo";
+const EMAILJS_TEMPLATE_ID = "template_vdogyhg";
+const EMAILJS_PUBLIC_KEY = "ZkXHzkeG9ZhWB3aCD";
 
 // Used until the categories table exists in Supabase
 const DEFAULT_CATEGORIES = [
