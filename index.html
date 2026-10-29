@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>My Shop</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -17,31 +17,72 @@
 
     <main class="page-content">
         <h2 id="category-title"></h2>
+        <div id="product-grid" class="product-grid"></div>
+        <p id="empty-msg" class="empty-msg" hidden>No items in this category yet.</p>
+    </main>
 
-        <!-- Owner-only upload panel -->
-        <section id="owner-panel" class="owner-panel" hidden>
-            <h3>Add item</h3>
-            <p class="hint">Tip: hold an item and drag it to rearrange. Tap Edit to change its photo, name or price.</p>
-            <form id="upload-form">
+    <!-- Bottom bar -->
+    <div class="cart-bar">
+        <button id="owner-btn" type="button">Login</button>
+        <button id="cart-btn" class="cart-btn" type="button">Cart <span id="cart-count">0</span></button>
+    </div>
+
+    <!-- Owner floating button -->
+    <button id="fab" class="fab" type="button" aria-label="Owner tools" hidden>+<span id="fab-badge" class="fab-badge" hidden>0</span></button>
+
+    <!-- Owner tools sheet (slides up) -->
+    <div id="sheet-overlay" class="overlay sheet-overlay"></div>
+    <section id="sheet" class="sheet" aria-label="Owner tools">
+        <div class="sheet-handle"></div>
+        <div class="sheet-head">
+            <button id="sheet-back" class="link-btn" type="button" hidden>Back</button>
+            <h3 id="sheet-title">Owner tools</h3>
+            <button id="sheet-close" class="link-btn" type="button">Close</button>
+        </div>
+        <div class="sheet-body">
+
+            <div id="sheet-menu" class="tool-grid">
+                <button type="button" class="tool" id="tool-additem"><span class="tool-icon">🛍️</span>Add item</button>
+                <button type="button" class="tool" id="tool-addcat"><span class="tool-icon">🗂️</span>Add category</button>
+                <button type="button" class="tool" id="tool-orders"><span class="tool-icon">📦</span>Orders<span id="orders-count" class="fab-badge" hidden>0</span></button>
+                <button type="button" class="tool" id="tool-cats"><span class="tool-icon">⚙️</span>Manage categories</button>
+                <p class="hint tool-hint">Tip: hold an item on the shop page and drag it to rearrange.</p>
+            </div>
+
+            <form id="upload-form" class="stack" hidden>
+                <select id="item-category" required></select>
                 <input type="text" id="item-name" placeholder="Item name" required maxlength="60">
                 <input type="number" id="item-price" placeholder="Price" required min="0" step="any">
+                <textarea id="item-desc" rows="3" maxlength="600" placeholder="Description (fabric, fit, details…)"></textarea>
+                <input type="text" id="item-sizes" placeholder="Sizes, e.g. S, M, L, XL (empty = one size)" maxlength="80">
+                <div class="preset-chips" data-target="item-sizes">
+                    <button type="button" data-sizes="S,M,L,XL,XXL">Clothing</button>
+                    <button type="button" data-sizes="39,40,41,42,43,44,45">Shoes</button>
+                    <button type="button" data-sizes="">One size</button>
+                </div>
                 <label class="upload-box" for="item-image">
                     <div id="upload-label">Tap to choose a photo</div>
                     <input type="file" id="item-image" accept="image/*" required>
                 </label>
                 <button type="submit" class="primary-btn">Upload item</button>
             </form>
-        </section>
 
-        <div id="product-grid" class="product-grid"></div>
-        <p id="empty-msg" class="empty-msg" hidden>No items in this category yet.</p>
-    </main>
+            <form id="category-form" class="stack" hidden>
+                <input type="text" id="cat-name" placeholder="Category name, e.g. Shorts" required maxlength="30">
+                <button type="submit" class="primary-btn">Add category</button>
+            </form>
 
-    <!-- Bottom cart bar -->
-    <div class="cart-bar">
-        <button id="owner-btn" type="button">Login</button>
-        <button id="cart-btn" class="cart-btn" type="button">Cart <span id="cart-count">0</span></button>
-    </div>
+            <div id="orders-view" hidden>
+                <div class="orders-bar"><button id="orders-refresh" class="link-btn" type="button">Refresh</button></div>
+                <div id="orders-list"></div>
+            </div>
+
+            <div id="categories-view" hidden>
+                <div id="categories-list"></div>
+            </div>
+
+        </div>
+    </section>
 
     <!-- Cart drawer -->
     <div id="overlay" class="overlay"></div>
@@ -57,7 +98,26 @@
         </div>
     </aside>
 
-    <!-- Owner login modal -->
+    <!-- Product details (customers tap an item) -->
+    <div id="product-modal" class="modal sheet-modal" hidden>
+        <div class="product-sheet">
+            <button id="pm-close" class="pm-close" type="button" aria-label="Close">✕</button>
+            <img id="pm-img" alt="">
+            <div class="pm-body">
+                <h3 id="pm-name"></h3>
+                <div id="pm-price" class="pm-price"></div>
+                <p id="pm-desc" class="pm-desc" hidden></p>
+                <div id="pm-sizes-wrap" hidden>
+                    <div class="size-label">Select size</div>
+                    <div id="pm-sizes" class="size-chips"></div>
+                </div>
+                <p id="pm-error" class="error-msg" hidden>Please choose a size.</p>
+                <button id="pm-add" class="primary-btn" type="button">Add to cart</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Login modal -->
     <div id="login-modal" class="modal" hidden>
         <form id="login-form" class="modal-box">
             <h3>Login</h3>
@@ -71,6 +131,29 @@
         </form>
     </div>
 
+    <!-- Checkout modal -->
+    <div id="checkout-modal" class="modal" hidden>
+        <div class="modal-box">
+            <form id="checkout-form" class="stack">
+                <h3>Checkout</h3>
+                <input type="text" id="co-name" placeholder="Full name" required maxlength="80" autocomplete="name">
+                <input type="email" id="co-email" placeholder="Email (we send your receipt here)" required maxlength="120" autocomplete="email">
+                <input type="tel" id="co-phone" placeholder="Phone number" required maxlength="30" autocomplete="tel">
+                <textarea id="co-address" placeholder="Delivery address" required rows="3" maxlength="300" autocomplete="street-address"></textarea>
+                <p id="co-error" class="error-msg" hidden></p>
+                <div class="modal-actions">
+                    <button type="button" id="co-cancel" class="link-btn">Cancel</button>
+                    <button type="submit" id="co-pay" class="primary-btn">Place order</button>
+                </div>
+            </form>
+            <div id="checkout-done" class="stack" hidden>
+                <h3>Thank you!</h3>
+                <p id="co-done-text"></p>
+                <button type="button" id="co-close" class="primary-btn">Done</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Owner edit modal -->
     <div id="edit-modal" class="modal" hidden>
         <form id="edit-form" class="modal-box">
@@ -80,8 +163,16 @@
                 <div id="edit-image-label">Tap to change photo</div>
                 <input type="file" id="edit-image" accept="image/*">
             </label>
+            <select id="edit-category" required></select>
             <input type="text" id="edit-name" placeholder="Item name" required maxlength="60">
             <input type="number" id="edit-price" placeholder="Price" required min="0" step="any">
+            <textarea id="edit-desc" rows="3" maxlength="600" placeholder="Description"></textarea>
+            <input type="text" id="edit-sizes" placeholder="Sizes, e.g. S, M, L, XL (empty = one size)" maxlength="80">
+            <div class="preset-chips" data-target="edit-sizes">
+                <button type="button" data-sizes="S,M,L,XL,XXL">Clothing</button>
+                <button type="button" data-sizes="39,40,41,42,43,44,45">Shoes</button>
+                <button type="button" data-sizes="">One size</button>
+            </div>
             <div class="modal-actions">
                 <button type="button" id="edit-cancel" class="link-btn">Cancel</button>
                 <button type="submit" class="primary-btn">Save</button>
@@ -90,6 +181,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.1/dist/umd/supabase.js"></script>
+    <script src="https://js.paystack.co/v2/inline.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
