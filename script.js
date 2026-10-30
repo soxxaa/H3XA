@@ -7,7 +7,7 @@ const SHOP_NAME = "H3XA";
 
 // Paystack PUBLIC key (pk_test_... while testing). Leave as is to take orders without online payment for now.
 // Never put your secret key (sk_...) in this file.
-const PAYSTACK_PUBLIC_KEY = "pk_test_PASTE_YOUR_PUBLIC_KEY_HERE";
+const PAYSTACK_PUBLIC_KEY = "pk_test_d9cd4eb85dcbeb4705da65959ae30b9bee04472d";
 
 // Order emails (EmailJS). Fill all four to turn on receipts + new-order alerts.
 const OWNER_EMAIL = "bengoldraymond@gmail.com";          // new orders are emailed here
