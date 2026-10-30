@@ -12,8 +12,9 @@ const PAYSTACK_PUBLIC_KEY = "pk_test_PASTE_YOUR_PUBLIC_KEY_HERE";
 // Order emails (EmailJS). Fill all four to turn on receipts + new-order alerts.
 const OWNER_EMAIL = "bengoldraymond@gmail.com";          // new orders are emailed here
 const EMAILJS_SERVICE_ID = "service_s7p8zxo";
-const EMAILJS_TEMPLATE_ID = "template_vdogyhg";
+const EMAILJS_TEMPLATE_ID = "template_uw9o9cs";
 const EMAILJS_PUBLIC_KEY = "ZkXHzkeG9ZhWB3aCD";
+const SHOW_EMAIL_ERRORS = true;   // shows why an email failed on the thank-you screen. Set to false when everything works.
 
 // Used until the categories table exists in Supabase
 const DEFAULT_CATEGORIES = [
@@ -1085,7 +1086,9 @@ async function sendEmail(params) {
 }
 
 async function sendOrderEmails(order, details, lines, paid) {
-    if (!emailsReady()) return false;
+    if (!emailsReady()) {
+        return { sent: false, error: "Email settings in script.js are not filled in yet." };
+    }
     const orderLines = lines.map((l) =>
         "• " + l.name + (l.size ? " (Size " + l.size + ")" : "") + " × " + l.qty + " — " + formatPrice(l.price * l.qty)
     ).join("\n");
@@ -1117,7 +1120,12 @@ async function sendOrderEmails(order, details, lines, paid) {
             intro: "Deliver to the address below."
         }))
     ]);
-    return results[0].status === "fulfilled";
+    const failed = results.find((r) => r.status === "rejected");
+    if (failed) console.error("Email failed:", failed.reason);
+    return {
+        sent: results[0].status === "fulfilled",
+        error: failed ? String((failed.reason && failed.reason.message) || failed.reason).slice(0, 200) : ""
+    };
 }
 
 // ================= CHECKOUT =================
@@ -1156,8 +1164,9 @@ async function finishOrder(order, details, lines, paid, reference) {
         try { await sb.rpc("report_payment", { p_order: order.order_id, p_reference: reference }); }
         catch (err) { /* the payment still went through */ }
     }
-    let emailed = false;
-    try { emailed = await sendOrderEmails(order, details, lines, paid); } catch (err) {}
+    let mail = { sent: false, error: "" };
+    try { mail = await sendOrderEmails(order, details, lines, paid); }
+    catch (err) { mail = { sent: false, error: String(err.message || err) }; }
 
     cart = [];
     store.set("shop_cart", cart);
@@ -1168,7 +1177,8 @@ async function finishOrder(order, details, lines, paid, reference) {
         : "Order #" + shortId(order.order_id) + " received.";
     text += " We will contact you on " + details.phone + " to " +
         (paid ? "confirm delivery." : "arrange payment and delivery.");
-    if (emailed) text += " A receipt was sent to " + details.email + ".";
+    if (mail.sent) text += " A receipt was sent to " + details.email + ".";
+    if (SHOW_EMAIL_ERRORS && mail.error) text += " (Email problem: " + mail.error + ")";
 
     $("co-done-text").textContent = text;
     $("checkout-form").hidden = true;
@@ -1256,3 +1266,4 @@ $("checkout-form").onsubmit = async (e) => {
     updateOwnerUI();
     renderCart();
 })();
+
