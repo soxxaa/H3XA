@@ -1,20 +1,6 @@
 // ================= CONFIG =================
-const SUPABASE_URL = "https://vfjzqbnwwdxdxdgumzhi.supabase.co";
-const SUPABASE_KEY = "sb_publishable__06UmNiEgfYnv6hScSpC4g_wu3dbjkZ"; // publishable key: safe to be public
+// Your keys and settings are in config.js
 const BUCKET = "product-images";
-const CURRENCY = "₦";
-const SHOP_NAME = "H3XA";
-
-// Paystack PUBLIC key (pk_test_... while testing). Leave as is to take orders without online payment for now.
-// Never put your secret key (sk_...) in this file.
-const PAYSTACK_PUBLIC_KEY = "pk_test_d9cd4eb85dcbeb4705da65959ae30b9bee04472d";
-
-// Order emails (EmailJS). Fill all four to turn on receipts + new-order alerts.
-const OWNER_EMAIL = "bengoldraymond@gmail.com";          // new orders are emailed here
-const EMAILJS_SERVICE_ID = "service_s7p8zxo";
-const EMAILJS_TEMPLATE_ID = "template_uw9o9cs";
-const EMAILJS_PUBLIC_KEY = "ZkXHzkeG9ZhWB3aCD";
-const SHOW_EMAIL_ERRORS = true;   // shows why an email failed on the thank-you screen. Set to false when everything works.
 
 // Used until the categories table exists in Supabase
 const DEFAULT_CATEGORIES = [
@@ -145,6 +131,7 @@ async function loadProducts() {
     cart = cart.filter((c) => products.some((p) => p.id === c.id));
     store.set("shop_cart", cart);
     renderProducts();
+    renderHome();
     renderCart();
 }
 
@@ -309,53 +296,251 @@ $("pm-add").onclick = () => {
     setTimeout(closeProduct, 600);
 };
 
-// ================= OWNER LOGIN =================
-function updateOwnerUI() {
-    $("fab").hidden = !isOwner;
-    $("owner-btn").textContent = isOwner ? "Log out" : "Login";
-    if (!isOwner) closeSheet();
-    renderProducts();
-    if (isOwner) loadOrders();
+// ================= ACCOUNTS (customers + owner) =================
+let currentUser = null;
+
+async function applySession(session) {
+    currentUser = session ? session.user : null;
+    isOwner = false;
+    if (currentUser) {
+        try {
+            const { data } = await sb.rpc("is_owner");
+            isOwner = data === true;
+        } catch (err) { /* not the owner */ }
+    }
+    updateAccountUI();
 }
 
-$("owner-btn").onclick = async () => {
-    if (isOwner) {
-        await sb.auth.signOut();
-        isOwner = false;
-        orders = [];
-        updateOwnerUI();
-    } else {
-        $("login-error").hidden = true;
-        $("owner-password").value = "";
-        $("login-modal").hidden = false;
-        $("owner-email").focus();
-    }
-};
-
-$("login-cancel").onclick = () => { $("login-modal").hidden = true; };
-
-$("login-form").onsubmit = async (e) => {
-    e.preventDefault();
-    const btn = e.target.querySelector("button[type=submit]");
-    btn.disabled = true;
-    const { error } = await sb.auth.signInWithPassword({
-        email: $("owner-email").value.trim(),
-        password: $("owner-password").value
-    });
-    btn.disabled = false;
-    if (error) {
-        $("login-error").hidden = false;
-        return;
-    }
-    isOwner = true;
-    $("login-modal").hidden = true;
-    updateOwnerUI();
-};
+function updateAccountUI() {
+    $("profile-btn").classList.toggle("signed-in", !!currentUser);
+    $("fab").hidden = !isOwner;
+    if (!isOwner) closeSheet();
+    renderProducts();
+    if (isOwner) { loadOrders(); } else { orders = []; updateOrderBadges(); }
+}
 
 sb.auth.onAuthStateChange((_event, session) => {
-    const now = !!session;
-    if (now !== isOwner) { isOwner = now; updateOwnerUI(); }
+    setTimeout(() => applySession(session), 0);
 });
+
+// ---------- login / sign up ----------
+let authMode = "login";
+
+function showAuthMsg(text, isError) {
+    const el = $("auth-msg");
+    el.textContent = text;
+    el.className = isError === false ? "ok-msg" : "error-msg";
+    el.hidden = false;
+}
+
+function setAuthMode(mode) {
+    authMode = mode;
+    $("tab-login").classList.toggle("active", mode === "login");
+    $("tab-signup").classList.toggle("active", mode === "signup");
+    $("auth-name").hidden = mode !== "signup";
+    $("auth-submit").textContent = mode === "signup" ? "Create account" : "Log in";
+    $("auth-password").autocomplete = mode === "signup" ? "new-password" : "current-password";
+    $("auth-msg").hidden = true;
+}
+
+function openAuth(mode) {
+    setAuthMode(mode || "login");
+    $("auth-password").value = "";
+    $("auth-modal").hidden = false;
+    $("auth-email").focus();
+}
+
+$("tab-login").onclick = () => setAuthMode("login");
+$("tab-signup").onclick = () => setAuthMode("signup");
+$("auth-cancel").onclick = () => { $("auth-modal").hidden = true; };
+
+$("auth-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = $("auth-submit");
+    btn.disabled = true;
+    $("auth-msg").hidden = true;
+
+    const email = $("auth-email").value.trim();
+    const password = $("auth-password").value;
+    let error = null;
+    let info = "";
+
+    if (authMode === "login") {
+        ({ error } = await sb.auth.signInWithPassword({ email, password }));
+    } else {
+        const res = await sb.auth.signUp({
+            email,
+            password,
+            options: { data: { full_name: $("auth-name").value.trim() } }
+        });
+        error = res.error;
+        if (!error && !(res.data && res.data.session)) {
+            info = "Account created. Check your email to confirm it, then log in.";
+        }
+    }
+
+    btn.disabled = false;
+    if (error) { showAuthMsg(error.message, true); return; }
+    if (info) { showAuthMsg(info, false); return; }
+    $("auth-modal").hidden = true;
+};
+
+// ---------- profile button + account window ----------
+function openAccount() {
+    if (!currentUser) return;
+    const meta = currentUser.user_metadata || {};
+    $("acct-name").textContent = meta.full_name || "Your account";
+    $("acct-email").textContent = currentUser.email;
+    $("acct-role").hidden = !isOwner;
+    $("account-modal").hidden = false;
+}
+
+$("profile-btn").onclick = () => {
+    if (currentUser) openAccount(); else openAuth("login");
+};
+$("acct-close").onclick = () => { $("account-modal").hidden = true; };
+$("acct-logout").onclick = async () => {
+    await sb.auth.signOut();
+    $("account-modal").hidden = true;
+};
+
+// ================= PAGES (Home / Shop) =================
+function showPage(page) {
+    const shop = page === "shop";
+    $("home-view").hidden = shop;
+    $("shop-view").hidden = !shop;
+    $("category-nav").hidden = !shop;
+    if (shop) { renderNav(); renderProducts(); } else { renderHome(); }
+    window.scrollTo(0, 0);
+}
+
+function route() { showPage(location.hash === "#shop" ? "shop" : "home"); }
+
+function go(page) {
+    if (location.hash === "#" + page) route(); else location.hash = page;
+}
+
+function goToCategory(id) {
+    currentCategory = id;
+    go("shop");
+}
+
+window.addEventListener("hashchange", route);
+$("hero-cta").onclick = () => go("shop");
+$("home-cta2").onclick = () => go("shop");
+
+function renderHome() {
+    const latest = products.slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+
+    // hero pictures: the three newest items
+    const hero = $("hero-images");
+    hero.innerHTML = "";
+    latest.slice(0, 3).forEach((p) => {
+        const img = document.createElement("img");
+        img.src = p.image_url;
+        img.alt = p.name;
+        img.onclick = () => openProduct(p.id);
+        hero.appendChild(img);
+    });
+    hero.hidden = hero.children.length === 0;
+
+    // one tile per category
+    const tiles = $("home-tiles");
+    tiles.innerHTML = "";
+    categories.forEach((cat) => {
+        const first = products.filter((p) => p.category === cat.id).sort(byPosition)[0];
+        const tile = document.createElement("button");
+        tile.type = "button";
+        tile.className = "tile";
+        tile.onclick = () => goToCategory(cat.id);
+
+        const box = document.createElement("div");
+        box.className = "tile-img";
+        if (first) {
+            const img = document.createElement("img");
+            img.src = first.image_url;
+            img.alt = cat.name;
+            img.loading = "lazy";
+            box.appendChild(img);
+        }
+        const name = document.createElement("div");
+        name.className = "tile-name";
+        name.textContent = cat.name;
+
+        tile.append(box, name);
+        tiles.appendChild(tile);
+    });
+
+    // new arrivals
+    const grid = $("home-new");
+    grid.innerHTML = "";
+    latest.slice(0, 8).forEach((p) => {
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "new-card";
+        card.onclick = () => openProduct(p.id);
+
+        const img = document.createElement("img");
+        img.src = p.image_url;
+        img.alt = p.name;
+        img.loading = "lazy";
+        const nm = document.createElement("div");
+        nm.className = "nm";
+        nm.textContent = p.name;
+        const pr = document.createElement("div");
+        pr.className = "pr";
+        pr.textContent = formatPrice(p.price);
+
+        card.append(img, nm, pr);
+        grid.appendChild(card);
+    });
+    $("home-new-section").hidden = latest.length === 0;
+}
+
+// ---------- main menu (left drawer) ----------
+function renderMenu() {
+    const box = $("menu-links");
+    box.innerHTML = "";
+    const addLink = (label, fn, cls) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "menu-link " + (cls || "");
+        b.textContent = label;
+        b.onclick = () => { closeMenu(); fn(); };
+        box.appendChild(b);
+    };
+    const addLabel = (text) => {
+        const d = document.createElement("div");
+        d.className = "menu-label";
+        d.textContent = text;
+        box.appendChild(d);
+    };
+
+    addLink("Home", () => go("home"));
+    addLink("Discover the Collection", () => go("shop"));
+    addLabel("CATEGORIES");
+    categories.forEach((c) => addLink(c.name, () => goToCategory(c.id), "menu-sub"));
+    addLabel("ACCOUNT");
+    addLink(currentUser ? "My account" : "Login / Sign up", () => {
+        if (currentUser) openAccount(); else openAuth("login");
+    });
+    addLink("Cart", openCart);
+}
+
+function openMenu() {
+    renderMenu();
+    $("main-menu").classList.add("open");
+    $("menu-overlay").classList.add("open");
+}
+
+function closeMenu() {
+    $("main-menu").classList.remove("open");
+    $("menu-overlay").classList.remove("open");
+}
+
+$("menu-btn").onclick = openMenu;
+$("menu-close").onclick = closeMenu;
+$("menu-overlay").onclick = closeMenu;
 
 // ================= OWNER TOOLS (floating button + sheet) =================
 const SHEET_VIEWS = {
@@ -1145,8 +1330,9 @@ $("checkout-btn").onclick = () => {
     if (cart.length === 0) { alert("Your cart is empty."); return; }
     closeCart();
     const saved = store.get("shop_customer", {});
-    $("co-name").value = saved.name || "";
-    $("co-email").value = saved.email || "";
+    const meta = currentUser ? (currentUser.user_metadata || {}) : {};
+    $("co-name").value = saved.name || meta.full_name || "";
+    $("co-email").value = (currentUser && currentUser.email) || saved.email || "";
     $("co-phone").value = saved.phone || "";
     $("co-address").value = saved.address || "";
     $("co-error").hidden = true;
@@ -1257,13 +1443,12 @@ $("checkout-form").onsubmit = async (e) => {
     $("empty-msg").hidden = false;
 
     const sessionCheck = sb.auth.getSession()
-        .then(({ data }) => { isOwner = !!(data && data.session); })
+        .then(({ data }) => applySession(data && data.session))
         .catch(() => {});
 
     await Promise.all([loadCategories(), loadProducts(), sessionCheck]);
     fillCategorySelects();
     renderNav();
-    updateOwnerUI();
     renderCart();
+    route();
 })();
-
